@@ -321,7 +321,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: profraw.*
-          path: /data/svtproject/
+          path: /data/tmp/svt-pgo-data/
           merge-multiple: true
       - name: Prepare Docker Container from localVS
         if: always()
@@ -339,6 +339,9 @@ jobs:
         run: |
           # Execute Script Stealthly
           eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          for sc in 33-aio-containered.sh 91-container-runner.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
           cp -f ${GITHUB_WORKSPACE}/33-aio-containered.sh /data/tmp/
           source ${GITHUB_WORKSPACE}/91-container-runner.sh 2>/dev/null || exit 1
           eval 'set -o history' 2>/dev/null
@@ -592,7 +595,7 @@ jobs:
         if: env.SvtPGOBolted == 'pass'
         uses: actions/upload-artifact@v4
         with:
-          name: SvtPGOBolted_results
+          name: SvtPGOBolted_finalresults
           path: /data/svtproject/svt-av1-psy-pgo-bolt-git-*.txz
           retention-days: 12
           compression-level: 0
