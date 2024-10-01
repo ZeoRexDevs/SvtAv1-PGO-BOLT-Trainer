@@ -1,0 +1,599 @@
+name: SvtAv1 PGO+BOLT Trainer
+
+on:
+  workflow_dispatch:
+    inputs:
+      targetmarch:
+        description: "Target Machine Architecture"
+        required: false
+        type: choice
+        options: ["x86-64-v2", "x86-64-v3", "native"]
+        default: "native"
+      CustomEnvs:
+        description: "Env Overrides (pipe-separated)"
+        type: string
+        required: false
+  schedule:
+    # Runs at 04:00 UTC on Saturdays.
+    - cron: '0 4 * * SAT'
+
+env:
+  VapourDockerImage: "fr3akyphantom/vapoursynth-av1an-runtime"
+  SvtBoltScriptAddr: "https://gist.github.com/rokibhasansagar/8ef615e250b0a63a81ccf5a8dbca192c"
+  targetmarch: ${{ inputs.targetmarch || 'native' }}
+  CustomEnvs: ${{ github.event.inputs.CustomEnvs || '' }}
+
+###>>
+###   SYSTEM MAPPING        >>   DOCKER CONTAINER
+#     /data/tmp             >>   /tmp
+##    /data/tmp/svt-bolt-data >> /tmp/svt-bolt-data
+##    /data/tmp/svt-pgo-data  >> /tmp/svt-pgo-data
+#     /data/videos          >>   /videos
+#     /data/svtproject      >>   /svtproject
+###
+###>>
+
+jobs:
+
+  pgocompilegen:
+    name: "PGOCompileGen"
+
+    runs-on: ubuntu-22.04
+
+    outputs:
+      matrix: ${{ steps.gen-matrix.outputs.matrix }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: 'main'
+          fetch-depth: 0
+      - name: Set GitHub Auth
+        uses: rokibhasansagar/custom_workflows/git_config@main
+        env:
+          PAT: ${{ secrets.GH_TOKEN }}
+      - name: Custom Env Patcher
+        if: github.event.inputs.CustomEnvs != ''
+        run: |
+          # Prepare Custom Env Var Overrides
+          if [[ ${CustomEnvs} != '' ]]; then
+            for i in $(sed 's/|/\n/g' <<<"${CustomEnvs}"); do
+              v=$(awk -F'=' '{print $1}' <<<"${i}")
+              w=$(cut -d'=' -f2- <<<"${i}" | sed 's#"##g')
+              echo "$v=$w" >>$GITHUB_ENV
+            done
+          fi
+          unset v w 2>/dev/null || true
+      - name: Maximize Space for /data volume
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          export latestGistRev=$(git ls-remote -q "${SvtBoltScriptAddr}" HEAD | awk '{print $1}')
+          echo "latestGistRev=${latestGistRev}" >>$GITHUB_ENV
+          for sc in 01-maximize-space.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          source ${GITHUB_WORKSPACE}/01-maximize-space.sh 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+      - name: Prepare Working Directories in /data
+        run: |
+          mkdir -p /data/{videos,svtproject,tmp/svt-{pgo,bolt}-data}
+      - name: Setup rclone
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          curl -sL --retry 8 --retry-connrefused "https://v.gd/setuprclone4fr3aky" | bash 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+        env:
+          RCLONE_CONFIG_HASH: ${{ secrets.RCLONE_CONFIG_HASH }}
+      - name: Download localVS.tar.gz from Artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: localVS
+          path: /data/
+      - name: Prepare Docker Container from localVS
+        if: always()
+        working-directory: /data
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          for sc in 99-docker-container-setup.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          source ${GITHUB_WORKSPACE}/99-docker-container-setup.sh 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+      - name: Upload localVS.tar.gz as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: localVS
+          path: /data/localVS.tar.gz
+          retention-days: 4
+          compression-level: 0
+      - name: Run PGOCompileGen in the Container
+        working-directory: /data
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          for sc in 33-aio-containered.sh 91-container-runner.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          cp -f ${GITHUB_WORKSPACE}/33-aio-containered.sh /data/tmp/
+          source ${GITHUB_WORKSPACE}/91-container-runner.sh 2>/dev/null || exit 1
+          eval 'set -o history' 2>/dev/null
+        env:
+          job_name: "pgocompilegen"
+      - name: Generate media_file matrix
+        working-directory: /data
+        id: gen-matrix
+        if: success()
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          for sc in 03-generate-matrix.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          source ${GITHUB_WORKSPACE}/03-generate-matrix.sh 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+      - name: Upload PGOCompileGen_results as Artifact
+        if: env.PGOCompileGen == 'pass'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PGOCompileGen_results
+          path: /data/svtproject/svt-av1-psy_PGOCompileGen_*.txz
+          retention-days: 7
+          compression-level: 0
+      - name: Upload PGOCompileGen_binaries as extra Artifact
+        if: env.PGOCompileGen == 'pass'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PGOCompileGen_binaries
+          path: /data/svtproject/svt-av1-psy_PGOCompileGen_binaries.txz
+          retention-days: 7
+          compression-level: 0
+
+  pgodatagen:
+    name: "PGODataGen"
+    if: ( !cancelled() || success() ) && needs.pgocompilegen.result == 'success'
+    needs: pgocompilegen
+
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        media_file: ${{fromJson(needs.pgocompilegen.outputs.matrix)}}
+    env:
+      media_file: ${{ matrix.media_file }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: 'main'
+          fetch-depth: 0
+      - name: Set GitHub Auth
+        uses: rokibhasansagar/custom_workflows/git_config@main
+        env:
+          PAT: ${{ secrets.GH_TOKEN }}
+      - name: Custom Env Patcher
+        if: github.event.inputs.CustomEnvs != ''
+        run: |
+          # Prepare Custom Env Var Overrides
+          if [[ ${CustomEnvs} != '' ]]; then
+            for i in $(sed 's/|/\n/g' <<<"${CustomEnvs}"); do
+              v=$(awk -F'=' '{print $1}' <<<"${i}")
+              w=$(cut -d'=' -f2- <<<"${i}" | sed 's#"##g')
+              echo "$v=$w" >>$GITHUB_ENV
+            done
+          fi
+          unset v w 2>/dev/null || true
+      - name: Maximize Space for /data volume
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          export latestGistRev=$(git ls-remote -q "${SvtBoltScriptAddr}" HEAD | awk '{print $1}')
+          echo "latestGistRev=${latestGistRev}" >>$GITHUB_ENV
+          for sc in 01-maximize-space.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          source ${GITHUB_WORKSPACE}/01-maximize-space.sh 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+      - name: Prepare Working Directories in /data
+        run: |
+          mkdir -p /data/{videos,svtproject,tmp/svt-{pgo,bolt}-data}
+      - name: Setup rclone
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          curl -sL --retry 8 --retry-connrefused "https://v.gd/setuprclone4fr3aky" | bash 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+        env:
+          RCLONE_CONFIG_HASH: ${{ secrets.RCLONE_CONFIG_HASH }}
+      - name: Download localVS.tar.gz from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: localVS
+          path: /data/
+      - name: Download PGOCompileGen_results from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PGOCompileGen_results
+          path: /data/svtproject/
+      - name: Prepare Docker Container from localVS
+        if: always()
+        working-directory: /data
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          for sc in 99-docker-container-setup.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          source ${GITHUB_WORKSPACE}/99-docker-container-setup.sh 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+      - name: Run Encodes with PGOCompileGen Binaries in the Container
+        working-directory: /data
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          for sc in 33-aio-containered.sh 43-av1an-encode-containered.sh 91-container-runner.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          cp -f ${GITHUB_WORKSPACE}/43-av1an-encode-containered.sh /data/svtproject/
+          cp -f ${GITHUB_WORKSPACE}/33-aio-containered.sh /data/tmp/
+          source ${GITHUB_WORKSPACE}/91-container-runner.sh 2>/dev/null || exit 1
+          eval 'set -o history' 2>/dev/null
+        env:
+          job_name: "pgodatagen"
+      - name: Upload profraw files as Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profraw.${{env.pgo_bolt_pfx}}
+          path: /data/tmp/svt-pgo-data/*.tzst
+          retention-days: 7
+          compression-level: 0
+
+  pgocompileuse:
+    name: "PGOCompileUse"
+    if: ( !cancelled() || success() ) && needs.pgodatagen.result == 'success'
+    needs: [pgocompilegen, pgodatagen]
+
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: 'main'
+          fetch-depth: 0
+      - name: Set GitHub Auth
+        uses: rokibhasansagar/custom_workflows/git_config@main
+        env:
+          PAT: ${{ secrets.GH_TOKEN }}
+      - name: Custom Env Patcher
+        if: github.event.inputs.CustomEnvs != ''
+        run: |
+          # Prepare Custom Env Var Overrides
+          if [[ ${CustomEnvs} != '' ]]; then
+            for i in $(sed 's/|/\n/g' <<<"${CustomEnvs}"); do
+              v=$(awk -F'=' '{print $1}' <<<"${i}")
+              w=$(cut -d'=' -f2- <<<"${i}" | sed 's#"##g')
+              echo "$v=$w" >>$GITHUB_ENV
+            done
+          fi
+          unset v w 2>/dev/null || true
+      - name: Maximize Space for /data volume
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          export latestGistRev=$(git ls-remote -q "${SvtBoltScriptAddr}" HEAD | awk '{print $1}')
+          echo "latestGistRev=${latestGistRev}" >>$GITHUB_ENV
+          for sc in 01-maximize-space.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          source ${GITHUB_WORKSPACE}/01-maximize-space.sh 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+      - name: Prepare Working Directories in /data
+        run: |
+          mkdir -p /data/{videos,svtproject,tmp/svt-{pgo,bolt}-data}
+      - name: Setup rclone
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          curl -sL --retry 8 --retry-connrefused "https://v.gd/setuprclone4fr3aky" | bash 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+        env:
+          RCLONE_CONFIG_HASH: ${{ secrets.RCLONE_CONFIG_HASH }}
+      - name: Download localVS.tar.gz from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: localVS
+          path: /data/
+      - name: Download PGOCompileGen_results from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PGOCompileGen_results
+          path: /data/svtproject/
+      - name: Download profraw files from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: profraw.*
+          path: /data/svtproject/
+          merge-multiple: true
+      - name: Prepare Docker Container from localVS
+        if: always()
+        working-directory: /data
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          for sc in 99-docker-container-setup.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          source ${GITHUB_WORKSPACE}/99-docker-container-setup.sh 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+      - name: Run PGOCompileUse in the Container after profdata merge
+        working-directory: /data
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          cp -f ${GITHUB_WORKSPACE}/33-aio-containered.sh /data/tmp/
+          source ${GITHUB_WORKSPACE}/91-container-runner.sh 2>/dev/null || exit 1
+          eval 'set -o history' 2>/dev/null
+        env:
+          job_name: "pgocompileuse"
+      - name: Upload PGOCompileUse_results as Artifact
+        if: env.PGOCompileUse == 'pass'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PGOCompileUse_results
+          path: /data/svtproject/svt-av1-psy_PGOCompileUse_*.txz
+          retention-days: 7
+          compression-level: 0
+      - name: Upload PGOCompileUse_binaries as extra Artifact
+        if: env.PGOCompileUse == 'pass'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PGOCompileUse_binaries
+          path: /data/svtproject/svt-av1-psy_PGOCompileUse_binaries.txz
+          retention-days: 7
+          compression-level: 0
+      - name: Upload PGOPreBolted_results as Artifact
+        if: env.PGOPreBolted == 'pass'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PGOPreBolted_results
+          path: /data/svtproject/svt-av1-psy_PGOPreBolted_*.txz
+          retention-days: 7
+          compression-level: 0
+      - name: Upload PGOPreBolted_binaries as extra Artifact
+        if: env.PGOPreBolted == 'pass'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PGOPreBolted_binaries
+          path: /data/svtproject/svt-av1-psy_PGOPreBolted_binaries.txz
+          retention-days: 7
+          compression-level: 0
+
+  boltdatagen:
+    name: "BoltDataGen"
+    if: ( !cancelled() || success() ) && needs.pgocompileuse.result == 'success'
+    needs: [pgocompilegen, pgodatagen, pgocompileuse]
+
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        media_file: ${{fromJson(needs.pgocompilegen.outputs.matrix)}}
+    env:
+      media_file: ${{ matrix.media_file }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: 'main'
+          fetch-depth: 0
+      - name: Set GitHub Auth
+        uses: rokibhasansagar/custom_workflows/git_config@main
+        env:
+          PAT: ${{ secrets.GH_TOKEN }}
+      - name: Custom Env Patcher
+        if: github.event.inputs.CustomEnvs != ''
+        run: |
+          # Prepare Custom Env Var Overrides
+          if [[ ${CustomEnvs} != '' ]]; then
+            for i in $(sed 's/|/\n/g' <<<"${CustomEnvs}"); do
+              v=$(awk -F'=' '{print $1}' <<<"${i}")
+              w=$(cut -d'=' -f2- <<<"${i}" | sed 's#"##g')
+              echo "$v=$w" >>$GITHUB_ENV
+            done
+          fi
+          unset v w 2>/dev/null || true
+      - name: Maximize Space for /data volume
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          export latestGistRev=$(git ls-remote -q "${SvtBoltScriptAddr}" HEAD | awk '{print $1}')
+          echo "latestGistRev=${latestGistRev}" >>$GITHUB_ENV
+          for sc in 01-maximize-space.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          source ${GITHUB_WORKSPACE}/01-maximize-space.sh 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+      - name: Prepare Working Directories in /data
+        run: |
+          mkdir -p /data/{videos,svtproject,tmp/svt-{pgo,bolt}-data}
+      - name: Setup rclone
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          curl -sL --retry 8 --retry-connrefused "https://v.gd/setuprclone4fr3aky" | bash 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+        env:
+          RCLONE_CONFIG_HASH: ${{ secrets.RCLONE_CONFIG_HASH }}
+      - name: Download localVS.tar.gz from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: localVS
+          path: /data/
+      - name: Download PGOPreBolted_results from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PGOPreBolted_results
+          path: /data/svtproject/
+      - name: Prepare Docker Container from localVS
+        if: always()
+        working-directory: /data
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          for sc in 99-docker-container-setup.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          source ${GITHUB_WORKSPACE}/99-docker-container-setup.sh 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+      - name: Run Encodes with PGOCompileUse/PreBolted Binaries in the Container
+        working-directory: /data
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          for sc in 33-aio-containered.sh 43-av1an-encode-containered.sh 91-container-runner.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          cp -f ${GITHUB_WORKSPACE}/43-av1an-encode-containered.sh /data/svtproject/
+          cp -f ${GITHUB_WORKSPACE}/33-aio-containered.sh /data/tmp/
+          source ${GITHUB_WORKSPACE}/91-container-runner.sh 2>/dev/null || exit 1
+          eval 'set -o history' 2>/dev/null
+        env:
+          job_name: "boltdatagen"
+      - name: Upload fdata files as Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fdata.${{env.pgo_bolt_pfx}}
+          path: /data/tmp/svt-bolt-data/*.tzst
+          retention-days: 7
+          compression-level: 0
+
+  svtboltgen:
+    name: "Bolted SvtAv1EncApp Builder"
+    if: ( !cancelled() || success() ) && needs.boltdatagen.result == 'success'
+    needs: [pgocompilegen, pgodatagen, pgocompileuse, boltdatagen]
+
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: 'main'
+          fetch-depth: 0
+      - name: Set GitHub Auth
+        uses: rokibhasansagar/custom_workflows/git_config@main
+        env:
+          PAT: ${{ secrets.GH_TOKEN }}
+      - name: Custom Env Patcher
+        if: github.event.inputs.CustomEnvs != ''
+        run: |
+          # Prepare Custom Env Var Overrides
+          if [[ ${CustomEnvs} != '' ]]; then
+            for i in $(sed 's/|/\n/g' <<<"${CustomEnvs}"); do
+              v=$(awk -F'=' '{print $1}' <<<"${i}")
+              w=$(cut -d'=' -f2- <<<"${i}" | sed 's#"##g')
+              echo "$v=$w" >>$GITHUB_ENV
+            done
+          fi
+          unset v w 2>/dev/null || true
+      - name: Maximize Space for /data volume
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          export latestGistRev=$(git ls-remote -q "${SvtBoltScriptAddr}" HEAD | awk '{print $1}')
+          echo "latestGistRev=${latestGistRev}" >>$GITHUB_ENV
+          for sc in 01-maximize-space.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          source ${GITHUB_WORKSPACE}/01-maximize-space.sh 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+      - name: Prepare Working Directories in /data
+        run: |
+          mkdir -p /data/{videos,svtproject,tmp/svt-{pgo,bolt}-data}
+      - name: Setup rclone
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          curl -sL --retry 8 --retry-connrefused "https://v.gd/setuprclone4fr3aky" | bash 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+        env:
+          RCLONE_CONFIG_HASH: ${{ secrets.RCLONE_CONFIG_HASH }}
+      - name: Download localVS.tar.gz from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: localVS
+          path: /data/
+      - name: Download PGO*_results from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: PGO*_results
+          path: /data/svtproject/
+          merge-multiple: true
+      - name: Download fdata files from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fdata.*
+          path: /data/tmp/svt-bolt-data/
+          merge-multiple: true
+      - name: Prepare Docker Container from localVS
+        if: always()
+        working-directory: /data
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          for sc in 99-docker-container-setup.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          source ${GITHUB_WORKSPACE}/99-docker-container-setup.sh 2>/dev/null
+          eval 'set -o history' 2>/dev/null
+      - name: Generate Final Bolted SvtAv1EncApp in the Container after fdata merge
+        working-directory: /data
+        run: |
+          # Execute Script Stealthly
+          eval 'set -eo pipefail' 2>/dev/null && eval 'set +o history' 2>/dev/null
+          for sc in 33-aio-containered.sh 91-container-runner.sh; do
+            curl -sL "${SvtBoltScriptAddr}/raw/${latestGistRev}/${sc}" -o ${GITHUB_WORKSPACE}/${sc}
+          done
+          cp -f ${GITHUB_WORKSPACE}/33-aio-containered.sh /data/tmp/
+          source ${GITHUB_WORKSPACE}/91-container-runner.sh 2>/dev/null || exit 1
+          eval 'set -o history' 2>/dev/null
+        env:
+          job_name: "svtboltgen"
+      - name: Upload SvtPGOBolted_results as Artifact
+        if: env.SvtPGOBolted == 'pass'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SvtPGOBolted_results
+          path: /data/svtproject/svt-av1-psy_SvtPGOBolted_*.txz
+          retention-days: 7
+          compression-level: 0
+      - name: Upload Bolted SvtAv1EncApp as extra Artifact
+        if: env.SvtPGOBolted == 'pass'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SvtPGOBolted_binaries
+          path: /data/svtproject/svt-av1-psy_SvtPGOBolted_binaries.txz
+          retention-days: 7
+          compression-level: 0
+      - name: Upload Final Bolted SvtAv1EncApp Release as Artifact
+        if: env.SvtPGOBolted == 'pass'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SvtPGOBolted_results
+          path: /data/svtproject/svt-av1-psy-pgo-bolt-git-*.txz
+          retention-days: 12
+          compression-level: 0
+
