@@ -14,8 +14,8 @@ on:
         type: string
         required: false
   schedule:
-    # Runs at 04:00 UTC on Saturdays.
-    - cron: '0 4 * * SAT'
+    # Runs at 06:00 UTC on Saturdays, Mondays and Wednesdays.
+    - cron: '0 6 * * SAT,MON,WED'
 
 env:
   VapourDockerImage: "fr3akyphantom/vapoursynth-av1an-runtime"
