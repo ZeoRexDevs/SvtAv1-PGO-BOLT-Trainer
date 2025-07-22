@@ -38,7 +38,7 @@ jobs:
   pgocompilegen:
     name: "PGOCompileGen"
 
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     outputs:
       matrix: ${{ steps.gen-matrix.outputs.matrix }}
@@ -158,7 +158,7 @@ jobs:
     if: ( !cancelled() || success() ) && needs.pgocompilegen.result == 'success'
     needs: pgocompilegen
 
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     strategy:
       fail-fast: false
@@ -261,7 +261,7 @@ jobs:
     if: ( !cancelled() || success() ) && needs.pgodatagen.result == 'success'
     needs: [pgocompilegen, pgodatagen]
 
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -385,7 +385,7 @@ jobs:
     if: ( !cancelled() || success() ) && needs.pgocompileuse.result == 'success'
     needs: [pgocompilegen, pgodatagen, pgocompileuse]
 
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     strategy:
       fail-fast: false
@@ -488,7 +488,7 @@ jobs:
     if: ( !cancelled() || success() ) && needs.boltdatagen.result == 'success'
     needs: [pgocompilegen, pgodatagen, pgocompileuse, boltdatagen]
 
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
