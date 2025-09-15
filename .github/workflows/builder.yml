@@ -379,6 +379,13 @@ jobs:
           path: /data/svtproject/svt-av1-psy_PGOPreBolted_binaries.txz
           retention-days: 7
           compression-level: 0
+      - name: Cleanup Unnecessary Artifact
+        if: env.PGOPreBolted == 'pass'
+        uses: rokibhasansagar/purge-artifacts-action@master
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          expire-in: '30minutes'
+          onlyPrefix: profraw
 
   boltdatagen:
     name: "BoltDataGen"
@@ -599,4 +606,11 @@ jobs:
           path: /data/svtproject/svt-av1-psy-pgo-bolt-git-*.txz
           retention-days: 12
           compression-level: 0
+      - name: Cleanup Unnecessary Artifact
+        if: env.SvtPGOBolted == 'pass'
+        uses: rokibhasansagar/purge-artifacts-action@master
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          expire-in: '30minutes'
+          onlyPrefix: fdata
 
